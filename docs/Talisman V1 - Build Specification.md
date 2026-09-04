@@ -1016,11 +1016,41 @@ PICKED_UP
 PUT_DOWN
 ```
 
+### Current Development Workflow
+
+Experiment 02 uses the XIAO Sense's onboard LSM6DS3 over its internal I2C connection. No external hardware is connected. The PlatformIO project pins `seeed-studio/Seeed Arduino LSM6DS3` version `2.0.7`.
+
+Firmware samples the accelerometer and gyroscope every 250 ms and prints every raw sample over USB serial. The initial semantic detector uses the peak absolute gyroscope axis, with deliberately visible provisional thresholds:
+
+```text
+MOVEMENT_STARTED: at least 12 dps for 2 consecutive samples
+MOVEMENT_STOPPED: at most 4 dps for 8 consecutive samples
+```
+
+The separate start and stop thresholds provide hysteresis. The consecutive-sample requirements reject isolated spikes and require two seconds of stillness before declaring movement stopped. These values are experimental observations for board bring-up, not settled behavioural architecture.
+
 ### Acceptance Criteria
 
 - movement is detected consistently;
 - stationary periods do not generate excessive false events;
 - raw readings remain observable during debugging.
+
+### Result
+
+**Completed:** 2026-09-04
+
+Evidence:
+
+- the onboard LSM6DS3 initialised successfully at I2C address `0x6A` and reported `imu: ok` at boot;
+- stationary accelerometer readings showed approximately 1 g total acceleration and the stationary gyroscope remained well below the movement-start threshold during the observed test window;
+- deliberate board movement produced clearly differentiated raw gyroscope readings, including peaks above 200 dps;
+- controlled movement generated `MOVEMENT_STARTED`, and returning the board to rest generated `MOVEMENT_STOPPED`;
+- an isolated gyroscope spike above the start threshold did not create a false start because it did not persist for two samples;
+- raw acceleration and gyroscope readings remained available alongside semantic events and the existing heartbeat output.
+
+`PICKED_UP` and `PUT_DOWN` remain candidate events and were not implemented in this experiment. Their semantics require more evidence than the initial movement boundary.
+
+During several tests, USB serial briefly disconnected while the board was being handled and then recovered. At least one reconnect resumed with a continuing heartbeat counter, indicating that the firmware had not reset. The USB cable did not visibly come out or significantly move, although slight movement within the socket was possible, and no interruption to the LED heartbeat was observed. The physical cause is not yet established and must be observed in future handling tests.
 
 ---
 
@@ -1381,21 +1411,25 @@ Hardware currently connected:
 
 Firmware version: 0.1.0-dev
 Firmware status:
-- Experiment 01A compile-only scaffold created
+- Experiments 01 and 02 complete
 - PlatformIO build succeeds from a clean build directory
 - repeated clean builds produce identical `.hex` and `.elf` artefacts; the generated `.zip` hash changes with archive metadata
 - Soma detects the board as Seeed XIAO nRF52840 Sense at USB VID:PID 2886:8045
 - two consecutive nrfutil DFU uploads completed successfully through /dev/cu.usbmodem21101
 - USB serial output confirmed at 115200 baud, including the complete boot identity and consecutive heartbeat counters
 - onboard red LED heartbeat physically confirmed as a brief pulse approximately once per second
+- onboard LSM6DS3 initialises over internal I2C at address 0x6A
+- accelerometer and gyroscope samples are emitted every 250 ms over USB serial
+- provisional hysteretic movement detection emits MOVEMENT_STARTED and MOVEMENT_STOPPED
 
-Bridge status: Initial uv scaffold only; intentionally untouched during Experiment 01
+Bridge status: Initial uv scaffold only; intentionally untouched during Experiments 01 and 02
 
-Last completed experiment: Experiment 01 - Board Bring-Up
-Current experiment: None; Experiment 01 complete and Experiment 02 not started
+Last completed experiment: Experiment 02 - IMU Bring-Up
+Current experiment: None; Experiment 02 complete and Experiment 03 not started
 
 Known issues:
 - The pinned Seeed platform requires an explicit Adafruit_TinyUSB include for USB CDC symbols to link
+- USB serial briefly disconnected and recovered during several board-handling tests; the cable remained connected, slight movement within the socket was possible, and neither the observed LED heartbeat nor the continuing serial heartbeat count indicated a firmware reset
 
 Power measurements: None
 
@@ -1407,14 +1441,18 @@ Confirmed decisions:
 - Serial monitor speed 115200 baud
 - XIAO USB detection, nrfutil upload, and USB CDC serial communication work on Soma
 - the onboard red LED is active-low and the configured 100 ms pulse at a 1,000 ms period is visibly correct
+- Seeed Arduino LSM6DS3 version 2.0.7 provides working access to the onboard IMU at I2C address 0x6A
+- initial IMU sampling period is 250 ms, with raw samples retained for observability
 
 Open decisions:
+- tune or replace the provisional 12 dps start and 4 dps stop movement thresholds using evidence from later physical use
+- determine whether handling-related USB interruptions come from cable or connector movement, host behaviour, or firmware
 - confirm the DRV2605L controller pinout and connection details from the physical board before Experiment 05 wiring
 - confirm the coin motors' actual drive technology and compatibility with the DRV2605L before Experiment 05 wiring
 - confirm the TTP223 modules' default solder-jumper configuration before Experiment 04 wiring
 - confirm the WS2812B-8 module pinout and electrical details before any future external-light experiment
 
-Next experiment: Experiment 02 - IMU Bring-Up (not started)
+Next experiment: Experiment 03 - Sleep and Wake (not started)
 ```
 
 This section should provide a rapid re-entry point for future Codex sessions.
