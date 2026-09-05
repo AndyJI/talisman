@@ -1063,6 +1063,35 @@ During several tests, USB serial briefly disconnected while the board was being 
 - preserve appropriate runtime behaviour;
 - obtain first approximate power measurements.
 
+### Current Development Workflow
+
+The first slice uses a deliberately observable timed cycle while the XIAO remains connected by USB:
+
+```text
+awake for 10 seconds
+sleep for 5 seconds
+wake and resume heartbeat and IMU sampling
+repeat
+```
+
+The sleep interval uses the pinned Arduino core's `delay()`. In this core, that blocks the firmware loop task and allows the FreeRTOS tickless-idle implementation to place the CPU into event-wait sleep until its scheduled wake time. The onboard IMU and USB connection remain enabled, so this is a CPU sleep/wake validation rather than a claim of deepest sleep or optimised whole-board power.
+
+Every transition remains visible over serial using `state: sleeping`, `wake: cycle=<n>`, and `state: awake`. The heartbeat LED is forced off during the sleep interval.
+
+### Progress
+
+On 2026-09-04, three consecutive timed sleep/wake cycles completed successfully. USB serial remained connected, the heartbeat counter continued across each cycle without resetting, and IMU output resumed after every wake. No state corruption was observed.
+
+An initial whole-board USB measurement used a YOJOCK USB digital tester. It reported approximately 5.22 V. Its instantaneous current display showed 0 A for most of the cycle, with brief readings of 0.020-0.024 A during each wake cycle; indicated power rose correspondingly from 0 W to approximately 0.10 W. The voltage, current, and power indications are internally consistent, but the tester's instantaneous resolution and update behaviour are not yet known. The 0 A indication therefore establishes only that consumption was below its displayed threshold, not that sleep current was zero.
+
+A subsequent run lasted approximately one hour by wall-clock time but the tester recorded only 4 minutes 14 seconds, 1 mAh, and 0.00 Wh. Its current graph showed repeated peaks up to approximately 0.019 A with a displayed minimum of 0 A. At 0.019 A for 4 minutes 14 seconds, the implied capacity is approximately 1.3 mAh, consistent with the rounded 1 mAh display. Separately, the firmware's 100 ms heartbeat pulses are expected to total approximately 4 minutes 24 seconds during one hour of the configured 10-second-awake / 5-second-sleep cycle. This close correspondence strongly suggests that the tester starts its timer and accumulation only when the LED-driven current peak crosses an internal load threshold, while ignoring the board's lower continuous consumption.
+
+Inspection of every available tester setting found only over-voltage, low-voltage and over-current protection limits, screen rotation, defaults, data clearing, standby style, capacity ratio and exit. There is no exposed low-current, load-start or timing threshold. The YOJOCK tester is therefore useful for observing the heartbeat-related current peaks but is not suitable for quantifying the board's continuous active or sleep consumption.
+
+An attempted follow-up measurement used two labelled USB-A screw-terminal adaptors, a USB-A-female-to-USB-C cable, and the Crenova multimeter. The adaptors' `V+` and `V-` terminals produced a stable 5 V reading from a mains-powered USB charger when tested individually. Testing the assembled bridge produced unstable and physically impossible indicated readings as the probes were moved, reaching approximately 87 V. Power was disconnected immediately and the XIAO was never attached to the assembled bridge. The improvised measurement path was abandoned rather than treating unsafe or unreliable instrumentation as evidence.
+
+Experiment 03 is complete. Its acceptance criteria concern reliable sleep, wake, repeated cycling, and runtime-state integrity; all were met. Accurate active and sleep-current profiling remains necessary for V1 but is deferred until suitable instrumentation is available or Experiment 11 begins. Deeper sleep, peripheral shutdown, and interrupt-driven wake were not part of this first CPU sleep/wake slice and remain future work.
+
 ### Acceptance Criteria
 
 - device enters sleep reliably;
@@ -1398,20 +1427,22 @@ BUILD STATE
 
 Hardware available:
 - 1 Seeed Studio XIAO nRF52840 Sense
+- YOJOCK USB digital power tester with USB and USB-C inputs and outputs
 - HEEPD haptic motor controller using a DRV2605L haptic driver (marked Vin/Logic 2-5V, GC-2, 94V-0; pin headers not yet attached)
 - WS2812B-8 LED modules
 - 5 flat coin vibration motors (10 x 2.7 mm, DC 3-5V, specified 63 mA, described by supplier as micro brushless)
 - 30 TTP223 capacitive touch button modules (15 x 11 mm, 2.5-5.5V, configurable self-lock/momentary and high/low-level output modes)
 - breadboards
 - jumper leads
-- digital multimeter
+- Crenova MS8233D 6000-count digital multimeter; DC current ranges include 60 mA at 0.01 mA resolution and 600 mA at 0.1 mA resolution through the fused 600 mA input
+- 2 labelled USB-A screw-terminal adaptors and 1 USB-A-female-to-USB-C cable; an attempted measurement bridge was abandoned after unstable readings and must not be treated as validated test equipment
 
 Hardware currently connected:
-- Seeed Studio XIAO nRF52840 Sense by USB only
+- none; all measurement hardware and the XIAO were disconnected after the aborted USB bridge test
 
 Firmware version: 0.1.0-dev
 Firmware status:
-- Experiments 01 and 02 complete
+- Experiments 01, 02 and 03 complete
 - PlatformIO build succeeds from a clean build directory
 - repeated clean builds produce identical `.hex` and `.elf` artefacts; the generated `.zip` hash changes with archive metadata
 - Soma detects the board as Seeed XIAO nRF52840 Sense at USB VID:PID 2886:8045
@@ -1421,17 +1452,26 @@ Firmware status:
 - onboard LSM6DS3 initialises over internal I2C at address 0x6A
 - accelerometer and gyroscope samples are emitted every 250 ms over USB serial
 - provisional hysteretic movement detection emits MOVEMENT_STARTED and MOVEMENT_STOPPED
+- initial timed CPU sleep test cycles between 10 seconds awake and 5 seconds asleep while retaining USB observability
+- three consecutive timed sleep/wake cycles completed without reset, serial disconnection, or failure to resume IMU sampling
 
-Bridge status: Initial uv scaffold only; intentionally untouched during Experiments 01 and 02
+Bridge status: Initial uv scaffold only; intentionally untouched through Experiment 03
 
-Last completed experiment: Experiment 02 - IMU Bring-Up
-Current experiment: None; Experiment 02 complete and Experiment 03 not started
+Last completed experiment: Experiment 03 - Sleep and Wake
+Current experiment: None; Experiment 03 complete and Experiment 04 not started
 
 Known issues:
 - The pinned Seeed platform requires an explicit Adafruit_TinyUSB include for USB CDC symbols to link
 - USB serial briefly disconnected and recovered during several board-handling tests; the cable remained connected, slight movement within the socket was possible, and neither the observed LED heartbeat nor the continuing serial heartbeat count indicated a firmware reset
 
-Power measurements: None
+Power measurements:
+- initial USB input approximately 5.22 V
+- instantaneous display mostly 0 A / 0 W, with brief wake-cycle indications of 0.020-0.024 A and approximately 0.10 W
+- tester resolution and update behaviour unknown; displayed 0 A is only an upper-bound observation and not a zero-current measurement
+- one-hour wall-clock run recorded only 4 minutes 14 seconds and 1 mAh; the result appears to represent current peaks rather than total board consumption and cannot be used as a one-hour average
+- tester settings expose no adjustable low-current or load-start threshold, so a different measurement method is required for active and sleep current
+- the available Crenova MS8233D's fused 60 mA DC range covers the observed 20-24 mA peaks with 0.01 mA display resolution; a safe series-power connection is still required
+- an improvised screw-terminal USB measurement bridge produced unstable readings up to approximately 87 V; it was disconnected before the XIAO was attached and yielded no valid power data
 
 Confirmed decisions:
 - PlatformIO Core 6.1.19
@@ -1443,8 +1483,11 @@ Confirmed decisions:
 - the onboard red LED is active-low and the configured 100 ms pulse at a 1,000 ms period is visibly correct
 - Seeed Arduino LSM6DS3 version 2.0.7 provides working access to the onboard IMU at I2C address 0x6A
 - initial IMU sampling period is 250 ms, with raw samples retained for observability
+- the pinned core's FreeRTOS tickless idle supports repeatable timed CPU sleep and scheduled wake while USB remains connected
 
 Open decisions:
+- establish a sufficiently sensitive and safe current-profiling method before Experiment 11 quantifies active and sleep consumption
+- determine the next practical sleep depth and wake source during later power-focused work
 - tune or replace the provisional 12 dps start and 4 dps stop movement thresholds using evidence from later physical use
 - determine whether handling-related USB interruptions come from cable or connector movement, host behaviour, or firmware
 - confirm the DRV2605L controller pinout and connection details from the physical board before Experiment 05 wiring
@@ -1452,7 +1495,7 @@ Open decisions:
 - confirm the TTP223 modules' default solder-jumper configuration before Experiment 04 wiring
 - confirm the WS2812B-8 module pinout and electrical details before any future external-light experiment
 
-Next experiment: Experiment 03 - Sleep and Wake (not started)
+Next experiment: Experiment 04 - Touch; solder and inspect the XIAO headers before external wiring
 ```
 
 This section should provide a rapid re-entry point for future Codex sessions.

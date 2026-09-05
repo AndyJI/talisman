@@ -12,6 +12,8 @@ constexpr uint32_t kSerialReadyTimeoutMs = 3000;
 constexpr uint32_t kHeartbeatPeriodMs = 1000;
 constexpr uint32_t kHeartbeatPulseMs = 100;
 constexpr uint32_t kImuSamplePeriodMs = 250;
+constexpr uint32_t kAwakePeriodMs = 10000;
+constexpr uint32_t kSleepPeriodMs = 5000;
 
 constexpr uint8_t kImuI2cAddress = 0x6A;
 
@@ -27,6 +29,8 @@ constexpr uint8_t kLedOff = HIGH;
 uint32_t heartbeatStartedAtMs = 0;
 uint32_t heartbeatCount = 0;
 bool heartbeatLedIsOn = false;
+uint32_t awakeStartedAtMs = 0;
+uint32_t sleepCycleCount = 0;
 
 LSM6DS3 imu(I2C_MODE, kImuI2cAddress);
 bool imuIsAvailable = false;
@@ -138,6 +142,33 @@ void updateMovement(const ImuSample& sample) {
   }
 }
 
+void sleepAndWake() {
+  ++sleepCycleCount;
+
+  Serial.print("sleep: entering cycle=");
+  Serial.print(sleepCycleCount);
+  Serial.print(" duration_ms=");
+  Serial.println(kSleepPeriodMs);
+  Serial.println("state: sleeping");
+  Serial.flush();
+
+  heartbeatLedIsOn = false;
+  digitalWrite(LED_BUILTIN, kLedOff);
+
+  // In this core, delay() blocks the loop task and allows FreeRTOS tickless
+  // idle to put the CPU into event-wait sleep until the scheduled wake time.
+  delay(kSleepPeriodMs);
+
+  const uint32_t nowMs = millis();
+  awakeStartedAtMs = nowMs;
+  lastImuSampleAtMs = nowMs;
+
+  Serial.print("wake: cycle=");
+  Serial.println(sleepCycleCount);
+  Serial.println("state: awake");
+  startHeartbeat(nowMs);
+}
+
 }  // namespace
 
 void setup() {
@@ -153,8 +184,10 @@ void setup() {
 
   printIdentity();
   initialiseImu();
-  startHeartbeat(millis());
-  lastImuSampleAtMs = millis();
+  const uint32_t nowMs = millis();
+  awakeStartedAtMs = nowMs;
+  lastImuSampleAtMs = nowMs;
+  startHeartbeat(nowMs);
 }
 
 void loop() {
@@ -175,5 +208,9 @@ void loop() {
     const ImuSample sample = readImuSample();
     printImuSample(sample);
     updateMovement(sample);
+  }
+
+  if (nowMs - awakeStartedAtMs >= kAwakePeriodMs) {
+    sleepAndWake();
   }
 }
