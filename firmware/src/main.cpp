@@ -14,8 +14,13 @@ constexpr uint32_t kHeartbeatPulseMs = 100;
 constexpr uint32_t kImuSamplePeriodMs = 250;
 constexpr uint32_t kAwakePeriodMs = 10000;
 constexpr uint32_t kSleepPeriodMs = 5000;
+constexpr uint32_t kTouchDebounceMs = 25;
+constexpr uint32_t kTapMaximumMs = 500;
+constexpr uint32_t kDoubleTapGapMaximumMs = 350;
+constexpr uint32_t kLongTouchThresholdMs = 1500;
 
 constexpr uint8_t kImuI2cAddress = 0x6A;
+constexpr uint8_t kTouchPin = D1;
 
 constexpr float kMovementStartThresholdDps = 12.0F;
 constexpr float kMovementStopThresholdDps = 4.0F;
@@ -31,6 +36,14 @@ uint32_t heartbeatCount = 0;
 bool heartbeatLedIsOn = false;
 uint32_t awakeStartedAtMs = 0;
 uint32_t sleepCycleCount = 0;
+bool touchInputIsHigh = false;
+bool touchCandidateIsHigh = false;
+uint32_t touchCandidateStartedAtMs = 0;
+uint32_t touchPressedAtMs = 0;
+bool longTouchWasEmitted = false;
+bool tapIsPending = false;
+uint32_t firstTapReleasedAtMs = 0;
+bool secondTapIsInProgress = false;
 
 LSM6DS3 imu(I2C_MODE, kImuI2cAddress);
 bool imuIsAvailable = false;
@@ -142,6 +155,93 @@ void updateMovement(const ImuSample& sample) {
   }
 }
 
+void initialiseTouchInput() {
+  pinMode(kTouchPin, INPUT);
+  touchInputIsHigh = digitalRead(kTouchPin) == HIGH;
+  touchCandidateIsHigh = touchInputIsHigh;
+  touchCandidateStartedAtMs = millis();
+
+  Serial.println(
+      "touch: pin=D1 mode=momentary_active_high debounce_ms=25 "
+      "tap_max_ms=500 double_tap_gap_ms=350 long_touch_ms=1500");
+  Serial.print("touch: initial=");
+  Serial.println(touchInputIsHigh ? "pressed" : "released");
+}
+
+void updateTouchInput(uint32_t nowMs) {
+  const bool inputIsHigh = digitalRead(kTouchPin) == HIGH;
+
+  if (inputIsHigh != touchCandidateIsHigh) {
+    touchCandidateIsHigh = inputIsHigh;
+    touchCandidateStartedAtMs = nowMs;
+    return;
+  }
+
+  if (touchCandidateIsHigh == touchInputIsHigh ||
+      nowMs - touchCandidateStartedAtMs < kTouchDebounceMs) {
+    return;
+  }
+
+  touchInputIsHigh = touchCandidateIsHigh;
+
+  if (touchInputIsHigh) {
+    touchPressedAtMs = nowMs;
+    longTouchWasEmitted = false;
+    secondTapIsInProgress =
+        tapIsPending && nowMs - firstTapReleasedAtMs <= kDoubleTapGapMaximumMs;
+    Serial.println("touch: pressed");
+    return;
+  }
+
+  const uint32_t touchDurationMs = nowMs - touchPressedAtMs;
+  Serial.print("touch: released duration_ms=");
+  Serial.println(touchDurationMs);
+
+  if (!longTouchWasEmitted && touchDurationMs <= kTapMaximumMs) {
+    if (secondTapIsInProgress) {
+      tapIsPending = false;
+      secondTapIsInProgress = false;
+      Serial.println("event: DOUBLE_TAP");
+    } else {
+      tapIsPending = true;
+      firstTapReleasedAtMs = nowMs;
+    }
+  } else if (!longTouchWasEmitted) {
+    if (secondTapIsInProgress && tapIsPending) {
+      tapIsPending = false;
+      Serial.println("event: TAP");
+    }
+    secondTapIsInProgress = false;
+    Serial.println("touch: unclassified");
+  }
+}
+
+void updatePendingTap(uint32_t nowMs) {
+  if (!tapIsPending || touchInputIsHigh ||
+      nowMs - firstTapReleasedAtMs <= kDoubleTapGapMaximumMs) {
+    return;
+  }
+
+  tapIsPending = false;
+  Serial.println("event: TAP");
+}
+
+void updateLongTouch(uint32_t nowMs) {
+  if (!touchInputIsHigh || longTouchWasEmitted ||
+      nowMs - touchPressedAtMs < kLongTouchThresholdMs) {
+    return;
+  }
+
+  longTouchWasEmitted = true;
+  if (secondTapIsInProgress && tapIsPending) {
+    tapIsPending = false;
+    secondTapIsInProgress = false;
+    Serial.println("event: TAP");
+  }
+  Serial.print("event: LONG_TOUCH duration_ms=");
+  Serial.println(nowMs - touchPressedAtMs);
+}
+
 void sleepAndWake() {
   ++sleepCycleCount;
 
@@ -184,6 +284,7 @@ void setup() {
 
   printIdentity();
   initialiseImu();
+  initialiseTouchInput();
   const uint32_t nowMs = millis();
   awakeStartedAtMs = nowMs;
   lastImuSampleAtMs = nowMs;
@@ -192,6 +293,9 @@ void setup() {
 
 void loop() {
   const uint32_t nowMs = millis();
+  updateTouchInput(nowMs);
+  updateLongTouch(nowMs);
+  updatePendingTap(nowMs);
   const uint32_t heartbeatElapsedMs = nowMs - heartbeatStartedAtMs;
 
   if (heartbeatLedIsOn && heartbeatElapsedMs >= kHeartbeatPulseMs) {
@@ -210,7 +314,8 @@ void loop() {
     updateMovement(sample);
   }
 
-  if (nowMs - awakeStartedAtMs >= kAwakePeriodMs) {
+  if (nowMs - awakeStartedAtMs >= kAwakePeriodMs && !touchInputIsHigh &&
+      !tapIsPending) {
     sleepAndWake();
   }
 }

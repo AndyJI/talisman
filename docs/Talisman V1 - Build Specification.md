@@ -1113,6 +1113,26 @@ Capacitive touch module.
 - generate semantic touch events;
 - investigate short versus sustained interaction.
 
+### Current Development Workflow
+
+The first slice uses one unmodified TTP223 module powered at 3.3 V with both configuration solder bridges left open. Its digital output connects to XIAO `D1` (`P0.03`), selected as a general-purpose input while leaving `D4`/`D5` available for the I2C bus required by the later haptic experiment.
+
+Firmware initially reports only debounced raw `touch: pressed` and `touch: released` transitions using a 25 ms stability interval. The TTP223 actively drives both output states, so the XIAO input is configured without an internal pull resistor. `TAP`, `DOUBLE_TAP`, and `LONG_TOUCH` semantics will not be introduced until the module's actual polarity, momentary behaviour, consistency, and false-trigger characteristics have been observed.
+
+### Progress
+
+On 2026-09-06, headers were soldered to the XIAO, DRV2605L module, and one TTP223 module. The XIAO continued running its heartbeat after soldering, and unpowered continuity checks found no shorts between adjacent XIAO or TTP223 header pins. The TTP223 configuration pads marked `A` and `B` remain open. External wiring and powered touch observations have not yet been performed.
+
+The initial breadboard wiring incorrectly treated three XIAO GPIO pins as `GND`, `D1`, and `3V3`. The TTP223 LED responded and misleading voltages were measurable because the module was being powered through GPIO paths, but repeated firmware diagnostics showed `D1` remaining low. The board was disconnected, the XIAO underside silkscreen was inspected directly, and the wiring was corrected to the actual `GND`, `D1`, and `3V3` pins. No damage or firmware instability was observed.
+
+With corrected wiring, the TTP223 supply measured 3.3 V and its output measured approximately 0 V untouched and 2.6 V touched. A temporary 500 ms raw GPIO trace then showed stable `0` while released and stable `1` throughout two deliberate approximately three-second holds. Each interaction emitted exactly one debounced `touch: pressed` and one `touch: released` transition. No false transition appeared during the captured idle intervals. This confirms that open configuration pads produce momentary active-high behaviour on the tested module. The temporary periodic trace was removed after diagnosis; transition output remains enabled.
+
+The next semantic slice provisionally classifies a release at or below 500 ms as `TAP` and emits `LONG_TOUCH` once a continuous press reaches 1,500 ms. Releases between those boundaries remain explicitly `unclassified`; `DOUBLE_TAP` is intentionally deferred until the individual duration boundaries have been tested. Raw transitions and measured durations remain visible alongside semantic events.
+
+Physical boundary testing confirmed quick presses between 51 ms and 410 ms as `TAP`, an 839 ms press as `unclassified`, and sustained presses of 2,260 ms and 3,092 ms as one `LONG_TOUCH` each at the 1,500 ms boundary. No duplicate semantic events were observed. The final semantic slice uses a 350 ms inter-tap window for `DOUBLE_TAP`; emission of a lone `TAP` is deferred until that window expires, and scheduled sleep waits for any active touch or pending tap decision to resolve.
+
+Final acceptance testing confirmed a lone 439 ms press as one delayed `TAP`; paired 68 ms presses as one `DOUBLE_TAP`; deliberately separated 120 ms and 69 ms presses as two independent `TAP` events; and a sustained 2,497 ms press as exactly one `LONG_TOUCH` emitted at 1,500 ms. Further valid double taps also classified correctly. Approximately 90 seconds of untouched operation spanning repeated awake and sleep cycles produced no false touch transitions. Experiment 04 therefore meets its acceptance criteria; longer-term enclosure and handling sensitivity remains a later integration concern rather than a blocker for the input classifier.
+
 ### Candidate Events
 
 ```text
@@ -1428,21 +1448,21 @@ BUILD STATE
 Hardware available:
 - 1 Seeed Studio XIAO nRF52840 Sense
 - YOJOCK USB digital power tester with USB and USB-C inputs and outputs
-- HEEPD haptic motor controller using a DRV2605L haptic driver (marked Vin/Logic 2-5V, GC-2, 94V-0; pin headers not yet attached)
+- HEEPD haptic motor controller using a DRV2605L haptic driver (marked Vin/Logic 2-5V, GC-2, 94V-0; pin headers attached but not electrically tested)
 - WS2812B-8 LED modules
 - 5 flat coin vibration motors (10 x 2.7 mm, DC 3-5V, specified 63 mA, described by supplier as micro brushless)
-- 30 TTP223 capacitive touch button modules (15 x 11 mm, 2.5-5.5V, configurable self-lock/momentary and high/low-level output modes)
+- 30 TTP223 capacitive touch button modules (15 x 11 mm, 2.5-5.5V, configurable self-lock/momentary and high/low-level output modes); one has a pin header attached with configuration pads `A` and `B` open
 - breadboards
 - jumper leads
 - Crenova MS8233D 6000-count digital multimeter; DC current ranges include 60 mA at 0.01 mA resolution and 600 mA at 0.1 mA resolution through the fused 600 mA input
 - 2 labelled USB-A screw-terminal adaptors and 1 USB-A-female-to-USB-C cable; an attempted measurement bridge was abandoned after unstable readings and must not be treated as validated test equipment
 
 Hardware currently connected:
-- none; all measurement hardware and the XIAO were disconnected after the aborted USB bridge test
+- XIAO by USB, with one TTP223 powered from 3.3 V and connected to `D1`
 
 Firmware version: 0.1.0-dev
 Firmware status:
-- Experiments 01, 02 and 03 complete
+- Experiments 01, 02, 03 and 04 complete
 - PlatformIO build succeeds from a clean build directory
 - repeated clean builds produce identical `.hex` and `.elf` artefacts; the generated `.zip` hash changes with archive metadata
 - Soma detects the board as Seeed XIAO nRF52840 Sense at USB VID:PID 2886:8045
@@ -1457,8 +1477,8 @@ Firmware status:
 
 Bridge status: Initial uv scaffold only; intentionally untouched through Experiment 03
 
-Last completed experiment: Experiment 03 - Sleep and Wake
-Current experiment: None; Experiment 03 complete and Experiment 04 not started
+Last completed experiment: Experiment 04 - Touch
+Current experiment: None; Experiment 04 complete and Experiment 05 not started
 
 Known issues:
 - The pinned Seeed platform requires an explicit Adafruit_TinyUSB include for USB CDC symbols to link
@@ -1484,6 +1504,8 @@ Confirmed decisions:
 - Seeed Arduino LSM6DS3 version 2.0.7 provides working access to the onboard IMU at I2C address 0x6A
 - initial IMU sampling period is 250 ms, with raw samples retained for observability
 - the pinned core's FreeRTOS tickless idle supports repeatable timed CPU sleep and scheduled wake while USB remains connected
+- XIAO `D1` (`P0.03`) is allocated provisionally to the TTP223 digital output; `D4`/`D5` remain available for I2C
+- the tested TTP223 with configuration pads `A` and `B` open produces momentary active-high output: approximately 0 V released and 2.6 V touched from a 3.3 V supply
 
 Open decisions:
 - establish a sufficiently sensitive and safe current-profiling method before Experiment 11 quantifies active and sleep consumption
@@ -1492,10 +1514,10 @@ Open decisions:
 - determine whether handling-related USB interruptions come from cable or connector movement, host behaviour, or firmware
 - confirm the DRV2605L controller pinout and connection details from the physical board before Experiment 05 wiring
 - confirm the coin motors' actual drive technology and compatibility with the DRV2605L before Experiment 05 wiring
-- confirm the TTP223 modules' default solder-jumper configuration before Experiment 04 wiring
+- measure TTP223 false-trigger characteristics over longer observation and varied handling
 - confirm the WS2812B-8 module pinout and electrical details before any future external-light experiment
 
-Next experiment: Experiment 04 - Touch; solder and inspect the XIAO headers before external wiring
+Next experiment: Experiment 05 - Haptics; verify the controller and motor electrical details before wiring
 ```
 
 This section should provide a rapid re-entry point for future Codex sessions.
