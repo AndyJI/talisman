@@ -1237,6 +1237,14 @@ Experiment 06 meets its acceptance criteria. The vocabulary remains limited to f
 - introduce time-based change or decay;
 - generate light/haptic responses based on state.
 
+### Implementation and Results
+
+The first behaviour engine uses two deliberately provisional, RAM-only dimensions bounded from 0 to 100: `arousal` and `familiarity`. State begins at arousal 20 and familiarity 0. `MOVEMENT_STARTED` adds 20 arousal; tap adds 5 arousal and 2 familiarity; double-tap adds 10 arousal and 3 familiarity; and long-touch subtracts 10 arousal while adding 4 familiarity. Arousal decays by 2 every five seconds while familiarity remains stable. Every event and decay prints its cause and resulting state, making the model deterministic and inspectable.
+
+Haptic expression now follows state evaluation rather than mapping directly from sensor input. Touch events use drive 40 below arousal 50 and drive 88 at or above that threshold while retaining their established pulse shapes. Physical testing confirmed a low-arousal tap at arousal 11 felt distinctly softer than Experiment 06 and used drive 40. Three separate movement episodes raised arousal to 58; a subsequent tap raised it to 61, used drive 88, and felt substantially stronger. Thus the same `TAP` semantic event produced perceptibly different output according to behavioural state.
+
+Further acceptance traces confirmed double-tap changed arousal 37 to 47 and familiarity 4 to 7, then used drive 40. Long-touch fired at 1,500 ms, changed arousal 41 to 31 and familiarity 7 to 11, and completed its drive-40 response. Timed decay continued predictably, the heartbeat remained active throughout, and state stayed within its defined bounds. Experiment 07 therefore meets its acceptance criteria without introducing persistence, randomness, battery state, or BLE concerns.
+
 ### Acceptance Criteria
 
 - internal state changes over time;
