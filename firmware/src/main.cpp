@@ -69,6 +69,20 @@ struct ImuSample {
   float gyroZDps;
 };
 
+enum class SemanticEventType : uint8_t {
+  MovementStarted,
+  MovementStopped,
+  Tap,
+  DoubleTap,
+  LongTouch,
+};
+
+struct SemanticEvent {
+  SemanticEventType type;
+  uint32_t occurredAtMs;
+  uint32_t durationMs;
+};
+
 void printIdentity() {
   Serial.println("[TALISMAN]");
   Serial.println("boot: ok");
@@ -152,21 +166,55 @@ void playHapticPattern(const char* patternName, uint8_t pulseCount,
                                                        : "i2c_error");
 }
 
-void emitTapEvent() {
-  Serial.println("event: TAP");
-  playHapticPattern("tap", 1, kTapHapticPulseMs, 0);
+const char* semanticEventName(SemanticEventType type) {
+  switch (type) {
+    case SemanticEventType::MovementStarted:
+      return "MOVEMENT_STARTED";
+    case SemanticEventType::MovementStopped:
+      return "MOVEMENT_STOPPED";
+    case SemanticEventType::Tap:
+      return "TAP";
+    case SemanticEventType::DoubleTap:
+      return "DOUBLE_TAP";
+    case SemanticEventType::LongTouch:
+      return "LONG_TOUCH";
+  }
+
+  return "UNKNOWN";
 }
 
-void emitDoubleTapEvent() {
-  Serial.println("event: DOUBLE_TAP");
-  playHapticPattern("double_tap", 2, kDoubleTapHapticPulseMs,
-                    kDoubleTapHapticGapMs);
+void handleSemanticEvent(const SemanticEvent& event) {
+  switch (event.type) {
+    case SemanticEventType::Tap:
+      playHapticPattern("tap", 1, kTapHapticPulseMs, 0);
+      return;
+    case SemanticEventType::DoubleTap:
+      playHapticPattern("double_tap", 2, kDoubleTapHapticPulseMs,
+                        kDoubleTapHapticGapMs);
+      return;
+    case SemanticEventType::LongTouch:
+      playHapticPattern("long_touch", 1, kLongTouchHapticPulseMs, 0);
+      return;
+    case SemanticEventType::MovementStarted:
+    case SemanticEventType::MovementStopped:
+      return;
+  }
 }
 
-void emitLongTouchEvent(uint32_t durationMs) {
-  Serial.print("event: LONG_TOUCH duration_ms=");
-  Serial.println(durationMs);
-  playHapticPattern("long_touch", 1, kLongTouchHapticPulseMs, 0);
+void emitSemanticEvent(SemanticEventType type, uint32_t durationMs = 0) {
+  const SemanticEvent event = {type, millis(), durationMs};
+
+  Serial.print("event: ");
+  Serial.print(semanticEventName(event.type));
+  Serial.print(" occurred_at_ms=");
+  Serial.print(event.occurredAtMs);
+  if (event.durationMs > 0) {
+    Serial.print(" duration_ms=");
+    Serial.print(event.durationMs);
+  }
+  Serial.println();
+
+  handleSemanticEvent(event);
 }
 
 ImuSample readImuSample() {
@@ -212,7 +260,7 @@ void updateMovement(const ImuSample& sample) {
     if (movementStartSampleCount >= kMovementStartSamples) {
       movementIsActive = true;
       movementStartSampleCount = 0;
-      Serial.println("event: MOVEMENT_STARTED");
+      emitSemanticEvent(SemanticEventType::MovementStarted);
     }
 
     return;
@@ -229,7 +277,7 @@ void updateMovement(const ImuSample& sample) {
   if (movementStopSampleCount >= kMovementStopSamples) {
     movementIsActive = false;
     movementStopSampleCount = 0;
-    Serial.println("event: MOVEMENT_STOPPED");
+    emitSemanticEvent(SemanticEventType::MovementStopped);
   }
 }
 
@@ -282,7 +330,7 @@ void updateTouchInput(uint32_t nowMs) {
     if (secondTapIsInProgress) {
       tapIsPending = false;
       secondTapIsInProgress = false;
-      emitDoubleTapEvent();
+      emitSemanticEvent(SemanticEventType::DoubleTap);
     } else {
       tapIsPending = true;
       firstTapReleasedAtMs = nowMs;
@@ -290,7 +338,7 @@ void updateTouchInput(uint32_t nowMs) {
   } else if (!longTouchWasEmitted) {
     if (secondTapIsInProgress && tapIsPending) {
       tapIsPending = false;
-      emitTapEvent();
+      emitSemanticEvent(SemanticEventType::Tap);
     }
     secondTapIsInProgress = false;
     Serial.println("touch: unclassified");
@@ -304,7 +352,7 @@ void updatePendingTap(uint32_t nowMs) {
   }
 
   tapIsPending = false;
-  emitTapEvent();
+  emitSemanticEvent(SemanticEventType::Tap);
 }
 
 void updateLongTouch(uint32_t nowMs) {
@@ -317,9 +365,10 @@ void updateLongTouch(uint32_t nowMs) {
   if (secondTapIsInProgress && tapIsPending) {
     tapIsPending = false;
     secondTapIsInProgress = false;
-    emitTapEvent();
+    emitSemanticEvent(SemanticEventType::Tap);
   }
-  emitLongTouchEvent(nowMs - touchPressedAtMs);
+  emitSemanticEvent(SemanticEventType::LongTouch,
+                    nowMs - touchPressedAtMs);
 }
 
 void sleepAndWake() {

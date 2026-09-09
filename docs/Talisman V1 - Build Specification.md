@@ -1212,6 +1212,14 @@ semantic event
 behaviour engine
 ```
 
+### Implementation and Results
+
+Firmware now represents the existing event vocabulary as a typed `SemanticEvent` containing an event type, monotonic occurrence time, and optional duration. Movement and touch classifiers emit through one `emitSemanticEvent()` boundary rather than logging or invoking output behaviour directly. A separate semantic-event handler maps touch meanings to the already validated haptic patterns; movement events currently require no output action.
+
+USB serial output keeps events directly inspectable in the form `event: <TYPE> occurred_at_ms=<TIME>`, with `duration_ms` included when relevant. Physical acceptance testing captured all five current types: `TAP`, `DOUBLE_TAP`, `LONG_TOUCH`, `MOVEMENT_STARTED`, and `MOVEMENT_STOPPED`. The final double-tap capture contained two presses of 118 ms and 103 ms and emitted exactly one `DOUBLE_TAP`; its haptic handler completed successfully. The long-touch event carried a 1,500 ms duration, movement start and stop were emitted in order, and the heartbeat continued throughout.
+
+Experiment 06 meets its acceptance criteria. The vocabulary remains limited to five meanings, hardware interpretation is separated from semantic dispatch, and no behavioural state, persistence, or BLE transport has been introduced prematurely.
+
 ### Acceptance Criteria
 
 - behavioural code does not depend directly on raw sensor implementation;
