@@ -14,12 +14,18 @@ constexpr uint32_t kHeartbeatPulseMs = 100;
 constexpr uint32_t kImuSamplePeriodMs = 250;
 constexpr uint32_t kAwakePeriodMs = 10000;
 constexpr uint32_t kSleepPeriodMs = 5000;
+constexpr bool kScheduledSleepEnabled = false;
 constexpr uint32_t kTouchDebounceMs = 25;
 constexpr uint32_t kTapMaximumMs = 500;
 constexpr uint32_t kDoubleTapGapMaximumMs = 350;
 constexpr uint32_t kLongTouchThresholdMs = 1500;
+constexpr uint32_t kTapHapticPulseMs = 150;
+constexpr uint32_t kDoubleTapHapticPulseMs = 90;
+constexpr uint32_t kDoubleTapHapticGapMs = 100;
+constexpr uint32_t kLongTouchHapticPulseMs = 350;
 
 constexpr uint8_t kImuI2cAddress = 0x6A;
+constexpr uint8_t kHapticI2cAddress = 0x5A;
 constexpr uint8_t kTouchPin = D1;
 
 constexpr float kMovementStartThresholdDps = 12.0F;
@@ -44,6 +50,7 @@ bool longTouchWasEmitted = false;
 bool tapIsPending = false;
 uint32_t firstTapReleasedAtMs = 0;
 bool secondTapIsInProgress = false;
+bool hapticControllerIsAvailable = false;
 
 LSM6DS3 imu(I2C_MODE, kImuI2cAddress);
 bool imuIsAvailable = false;
@@ -89,6 +96,77 @@ void initialiseImu() {
   imuIsAvailable = true;
   Serial.println("imu: ok");
   Serial.println("motion: start=12.0dps/2_samples stop=4.0dps/8_samples");
+}
+
+bool writeHapticRegister(uint8_t registerAddress, uint8_t value) {
+  Wire.beginTransmission(kHapticI2cAddress);
+  Wire.write(registerAddress);
+  Wire.write(value);
+  return Wire.endTransmission() == 0;
+}
+
+void probeHapticController() {
+  // D4/D5 use Wire. The onboard IMU is on the separate Wire1 bus.
+  Wire.begin();
+  Wire.setClock(100000);
+  Wire.beginTransmission(kHapticI2cAddress);
+  const uint8_t result = Wire.endTransmission();
+
+  hapticControllerIsAvailable = result == 0;
+  Serial.print("haptic: address=0x5A status=");
+  Serial.println(hapticControllerIsAvailable ? "found" : "not_found");
+}
+
+void playHapticPattern(const char* patternName, uint8_t pulseCount,
+                       uint32_t pulseDurationMs, uint32_t gapDurationMs) {
+  if (!hapticControllerIsAvailable) {
+    Serial.print("haptic: pattern=");
+    Serial.print(patternName);
+    Serial.println(" status=skipped_controller_unavailable");
+    return;
+  }
+
+  // The DRV2605L defaults to ERM closed-loop configuration. Enter real-time
+  // playback mode and apply a low drive value briefly, then explicitly stop
+  // and return the controller to standby. This intentionally avoids the
+  // effect library's stronger overdrive patterns while the motor rating is
+  // still provisional.
+  bool success = writeHapticRegister(0x01, 0x05);
+  for (uint8_t pulse = 0; success && pulse < pulseCount; ++pulse) {
+    success = writeHapticRegister(0x02, 0x40);
+    if (success) {
+      delay(pulseDurationMs);
+      success = writeHapticRegister(0x02, 0x00);
+    }
+    if (success && pulse + 1 < pulseCount) {
+      delay(gapDurationMs);
+    }
+  }
+  const bool pulseStopped = writeHapticRegister(0x02, 0x00);
+  const bool standbySet = writeHapticRegister(0x01, 0x40);
+
+  Serial.print("haptic: pattern=");
+  Serial.print(patternName);
+  Serial.print(" status=");
+  Serial.println(success && pulseStopped && standbySet ? "complete"
+                                                       : "i2c_error");
+}
+
+void emitTapEvent() {
+  Serial.println("event: TAP");
+  playHapticPattern("tap", 1, kTapHapticPulseMs, 0);
+}
+
+void emitDoubleTapEvent() {
+  Serial.println("event: DOUBLE_TAP");
+  playHapticPattern("double_tap", 2, kDoubleTapHapticPulseMs,
+                    kDoubleTapHapticGapMs);
+}
+
+void emitLongTouchEvent(uint32_t durationMs) {
+  Serial.print("event: LONG_TOUCH duration_ms=");
+  Serial.println(durationMs);
+  playHapticPattern("long_touch", 1, kLongTouchHapticPulseMs, 0);
 }
 
 ImuSample readImuSample() {
@@ -166,6 +244,9 @@ void initialiseTouchInput() {
       "tap_max_ms=500 double_tap_gap_ms=350 long_touch_ms=1500");
   Serial.print("touch: initial=");
   Serial.println(touchInputIsHigh ? "pressed" : "released");
+  if (!kScheduledSleepEnabled) {
+    Serial.println("sleep: disabled reason=haptic_experiment");
+  }
 }
 
 void updateTouchInput(uint32_t nowMs) {
@@ -201,7 +282,7 @@ void updateTouchInput(uint32_t nowMs) {
     if (secondTapIsInProgress) {
       tapIsPending = false;
       secondTapIsInProgress = false;
-      Serial.println("event: DOUBLE_TAP");
+      emitDoubleTapEvent();
     } else {
       tapIsPending = true;
       firstTapReleasedAtMs = nowMs;
@@ -209,7 +290,7 @@ void updateTouchInput(uint32_t nowMs) {
   } else if (!longTouchWasEmitted) {
     if (secondTapIsInProgress && tapIsPending) {
       tapIsPending = false;
-      Serial.println("event: TAP");
+      emitTapEvent();
     }
     secondTapIsInProgress = false;
     Serial.println("touch: unclassified");
@@ -223,7 +304,7 @@ void updatePendingTap(uint32_t nowMs) {
   }
 
   tapIsPending = false;
-  Serial.println("event: TAP");
+  emitTapEvent();
 }
 
 void updateLongTouch(uint32_t nowMs) {
@@ -236,10 +317,9 @@ void updateLongTouch(uint32_t nowMs) {
   if (secondTapIsInProgress && tapIsPending) {
     tapIsPending = false;
     secondTapIsInProgress = false;
-    Serial.println("event: TAP");
+    emitTapEvent();
   }
-  Serial.print("event: LONG_TOUCH duration_ms=");
-  Serial.println(nowMs - touchPressedAtMs);
+  emitLongTouchEvent(nowMs - touchPressedAtMs);
 }
 
 void sleepAndWake() {
@@ -284,6 +364,7 @@ void setup() {
 
   printIdentity();
   initialiseImu();
+  probeHapticController();
   initialiseTouchInput();
   const uint32_t nowMs = millis();
   awakeStartedAtMs = nowMs;
@@ -314,7 +395,8 @@ void loop() {
     updateMovement(sample);
   }
 
-  if (nowMs - awakeStartedAtMs >= kAwakePeriodMs && !touchInputIsHigh &&
+  if (kScheduledSleepEnabled &&
+      nowMs - awakeStartedAtMs >= kAwakePeriodMs && !touchInputIsHigh &&
       !tapIsPending) {
     sleepAndWake();
   }

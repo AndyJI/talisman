@@ -1133,6 +1133,8 @@ Physical boundary testing confirmed quick presses between 51 ms and 410 ms as `T
 
 Final acceptance testing confirmed a lone 439 ms press as one delayed `TAP`; paired 68 ms presses as one `DOUBLE_TAP`; deliberately separated 120 ms and 69 ms presses as two independent `TAP` events; and a sustained 2,497 ms press as exactly one `LONG_TOUCH` emitted at 1,500 ms. Further valid double taps also classified correctly. Approximately 90 seconds of untouched operation spanning repeated awake and sleep cycles produced no false touch transitions. Experiment 04 therefore meets its acceptance criteria; longer-term enclosure and handling sensitivity remains a later integration concern rather than a blocker for the input classifier.
 
+Later haptic integration testing found that the exposed TTP223 electrode can trigger before direct contact and can occasionally remain asserted after handling until the pad is wiped. Finger moisture or residue is a plausible contributor, but has not been isolated experimentally. Proximity-only operation is an adequate bench workaround, not a final design solution; enclosure spacing, electrode geometry, sensitivity, surface contamination, and reliable release behaviour must be evaluated during physical integration.
+
 ### Candidate Events
 
 ```text
@@ -1155,6 +1157,28 @@ LONG_TOUCH
 
 - DRV2605L;
 - coin vibration motor.
+
+### Current Development Workflow
+
+Bring-up remains USB-powered and staged: first verify the unpowered controller and actuator, then confirm controller-only I2C communication, and only then connect one compatible actuator for a conservative single-effect test. Battery power is excluded from this experiment.
+
+### Progress
+
+On 2026-09-06, visual inspection confirmed the controller breakout labels `VIN`, `GND`, `SCL`, `SDA`, and `IN`, plus separate motor `-` and `+` terminals. Unpowered continuity checks produced no beeps between adjacent header pins, including `VIN` and `GND`.
+
+The initial megaohm readings were taken across the unpowered controller's motor output terminals rather than across a motor and therefore do not characterise the actuator. A corrected measurement directly across one supplied motor's red and black leads produced 31.6 ohm and 32.4 ohm readings in opposite probe orientations. The low, nearly symmetric resistance is consistent with a bare motor winding rather than internal brushless drive electronics, so the motor may proceed as a provisional ERM candidate. Its exact rated voltage and the supplier's contradictory "brushless" description remain unresolved; initial powered testing must therefore use conservative driver settings.
+
+An initial firmware probe attempted a direct Wire transaction to the expected controller address after successful onboard IMU initialisation. The firmware consistently stopped before heartbeat initialisation, both with the external SDA/SCL lines connected and with them physically disconnected. This isolates the failure to the diagnostic's I2C API or bus selection rather than the external controller wiring. The probe was removed and the known-good runtime restored before further investigation.
+
+Source inspection established that the external header bus on `D4`/`D5` is `Wire`, while the onboard IMU library uses the separate `Wire1` bus. Explicitly initialising `Wire` at 100 kHz corrected the diagnostic, and the connected controller acknowledged at I2C address `0x5A` while the heartbeat and IMU continued operating.
+
+With one motor connected red-to-`+` and black-to-`-`, an initial 100 ms real-time-playback pulse at drive value `0x20` was audible but below the tester's tactile threshold. The motor connection first proved intermittent because its fine black lead slipped from the screw-terminal block; after the lead was re-stripped, secured, and the complete path rechecked at 31.8 ohm, repeated 150 ms pulses at `0x40` were clearly felt. This identifies the screw-terminal termination as a bench reliability risk rather than an electrical-driver failure.
+
+The final firmware maps `TAP` to one 150 ms pulse, `DOUBLE_TAP` to two 90 ms pulses separated by 100 ms, and `LONG_TOUCH` to one 350 ms pulse. All three patterns were repeatedly triggered, clearly distinguishable by touch, and did not destabilise the XIAO heartbeat.
+
+Testing also exposed an integration constraint inherited from Experiment 03: its 10-second-awake, 5-second blocking sleep schedule stops the heartbeat and prevents touch sampling and haptic responses throughout each sleep interval. Scheduled sleep is therefore disabled in the Experiment 05 firmware. A later power-management design must replace blocking delay-based sleep with a wake-capable input architecture before touch interaction and low-power operation can coexist.
+
+Experiment 05 meets its acceptance criteria. Motor drive remains deliberately conservative pending confirmation of the actuator's exact rating and a mechanically reliable final connection.
 
 ### Goals
 
@@ -1448,7 +1472,8 @@ BUILD STATE
 Hardware available:
 - 1 Seeed Studio XIAO nRF52840 Sense
 - YOJOCK USB digital power tester with USB and USB-C inputs and outputs
-- HEEPD haptic motor controller using a DRV2605L haptic driver (marked Vin/Logic 2-5V, GC-2, 94V-0; pin headers attached but not electrically tested)
+- 2 LiPo batteries labelled 3.7 V, 150 mAh, with PH1.25 plugs, plus a matching USB charging lead; connector polarity, protection circuitry, and charging behaviour remain to be verified before later integration
+- HEEPD haptic motor controller using a DRV2605L haptic driver (marked Vin/Logic 2-5V, GC-2, 94V-0; verified on the external I2C bus at address `0x5A`)
 - WS2812B-8 LED modules
 - 5 flat coin vibration motors (10 x 2.7 mm, DC 3-5V, specified 63 mA, described by supplier as micro brushless)
 - 30 TTP223 capacitive touch button modules (15 x 11 mm, 2.5-5.5V, configurable self-lock/momentary and high/low-level output modes); one has a pin header attached with configuration pads `A` and `B` open
