@@ -1263,6 +1263,18 @@ Further acceptance traces confirmed double-tap changed arousal 37 to 47 and fami
 - restore state after restart;
 - begin rolling semantic event history.
 
+### Implementation and Results
+
+Experiment 08 stores a compact version-1 binary snapshot in the XIAO's internal LittleFS storage. The snapshot has a fixed magic value, schema version, structure size and FNV-1a checksum so incompatible or incomplete data is rejected in favour of safe defaults. Familiarity, total interaction count and semantic touch-event history are persistent; arousal remains deliberately transient and returns to 20 on boot.
+
+Touch interactions mark state dirty, but do not write immediately. A single checkpoint is made ten seconds after the first pending interaction, coalescing nearby changes and avoiding continuous flash writes. Successive generations alternate between two files, preserving the previous valid generation if a later write is interrupted. Movement and timed arousal decay do not trigger persistence writes.
+
+The semantic history is a fixed eight-record ring containing sequence number, event type and optional duration. Once full, a new event replaces the oldest rather than growing storage use. Boot diagnostics report whether defaults or a valid snapshot were used, plus schema, generation, interaction count, familiarity and the retained history in chronological order.
+
+Physical acceptance began with no valid snapshot and safe defaults. A tap produced interaction count 1 and familiarity 2, then a delayed checkpoint. After reset, generation 1 restored with schema 1, interaction count 1, familiarity 2 and the saved `TAP`; arousal independently restarted at 20 and the heartbeat remained healthy. A subsequent run added more interactions than the history capacity and produced a later restored familiarity of 22. The verbose live IMU stream obscured the final boot-time history listing in the captured serial transcript, but the fixed-capacity ring and replacement index were verified in the implementation and the persistent-state restart path was exercised repeatedly.
+
+Experiment 08 therefore meets its persistence boundary: selected behavioural state survives restart, the format is explicitly versioned and validated, flash writes are checkpointed, and semantic history storage is structurally bounded without persisting raw sensor data.
+
 ### Acceptance Criteria
 
 - selected state survives power cycle/reset;
