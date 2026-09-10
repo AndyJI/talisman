@@ -73,10 +73,40 @@ async def watch_talisman(timeout: float, seconds: float) -> None:
         await client.stop_notify(STATE_UUID)
 
 
+async def demo_talisman(timeout: float, seconds: float) -> None:
+    device = await find_talisman(timeout)
+    payload = json.dumps(ATTENTION_COMMAND, separators=(",", ":")).encode()
+    async with BleakClient(device) as client:
+        print("Connected; running the complete development-interface path")
+        service_uuids = {service.uuid.lower() for service in client.services}
+        if SERVICE_UUID not in service_uuids:
+            raise RuntimeError("Talisman service was not exposed")
+
+        info = json.loads((await client.read_gatt_char(INFO_UUID)).decode())
+        state = json.loads((await client.read_gatt_char(STATE_UUID)).decode())
+        latest_event = json.loads(
+            (await client.read_gatt_char(EVENTS_UUID)).decode()
+        )
+        config = json.loads((await client.read_gatt_char(CONFIG_UUID)).decode())
+        print(f"Info: {json.dumps(info, sort_keys=True)}")
+        print(f"State: {json.dumps(state, sort_keys=True)}")
+        print(f"Latest event: {json.dumps(latest_event, sort_keys=True)}")
+        print(f"Config: {json.dumps(config, sort_keys=True)}")
+
+        await client.start_notify(STATE_UUID, print_notification)
+        await client.start_notify(EVENTS_UUID, print_notification)
+        await client.write_gatt_char(COMMAND_UUID, payload, response=True)
+        print(f"Command sent: {payload.decode()}")
+        print(f"Watching state and events for {seconds:.0f} seconds")
+        await asyncio.sleep(seconds)
+        await client.stop_notify(EVENTS_UUID)
+        await client.stop_notify(STATE_UUID)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Talisman BLE diagnostic bridge")
     parser.add_argument(
-        "command", choices=("scan", "inspect", "signal", "watch")
+        "command", choices=("scan", "inspect", "signal", "watch", "demo")
     )
     parser.add_argument("--timeout", type=float, default=10.0)
     parser.add_argument("--seconds", type=float, default=30.0)
@@ -91,8 +121,10 @@ async def run() -> None:
         await inspect_talisman(args.timeout)
     elif args.command == "signal":
         await signal_talisman(args.timeout)
-    else:
+    elif args.command == "watch":
         await watch_talisman(args.timeout, args.seconds)
+    else:
+        await demo_talisman(args.timeout, args.seconds)
 
 
 def main() -> None:

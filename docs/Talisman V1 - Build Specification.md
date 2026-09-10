@@ -1367,6 +1367,14 @@ The bridge should:
 - display events;
 - send a semantic signal.
 
+### Implementation and Results
+
+The standalone Python bridge in `bridge/` now exposes `scan`, `inspect`, `watch`, and `signal` as focused diagnostic operations, plus a bounded `demo` command that exercises the complete development path in one BLE connection. The interface discovers `Talisman-V1`, verifies the custom service, decodes the readable JSON characteristics, subscribes to state and event notifications, sends a semantic attention command, and presents each result as labelled JSON in the terminal. Its environment and Bleak dependency are locked with `uv`, and it has no dependency on or modification to `avatar-v2`.
+
+The end-to-end acceptance run discovered and connected to the Talisman, decoded the device information, current state, latest event, and active semantic timing configuration, then sent `{"action":"signal","pattern":"attention"}`, which produced the expected two motor pulses. During the same observation window, a physical single touch produced its local motor response and the bridge displayed the resulting semantic event and state notifications.
+
+Experiment 11 therefore completes the intended path from physical Talisman through BLE to a human-readable standalone development interface. Discovery, inspection, event observation, state observation, and semantic command dispatch are repeatable from one documented command without importing experimental BLE concerns into another project.
+
 ### Acceptance Criteria
 
 The complete path works:

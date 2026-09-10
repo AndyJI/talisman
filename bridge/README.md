@@ -9,6 +9,7 @@ uv run main.py scan
 uv run main.py inspect
 uv run main.py signal
 uv run main.py watch --seconds 30
+uv run main.py demo --seconds 15
 ```
 
 - `scan` discovers the device advertised as `Talisman-V1`.
@@ -18,6 +19,8 @@ uv run main.py watch --seconds 30
   intent to the current physical expression.
 - `watch` reads the initial state and latest event, then prints live state and
   semantic-event notifications.
+- `demo` runs the complete Experiment 11 path in one connection: discover,
+  inspect, subscribe, send the attention signal, and display notifications.
 
 macOS may ask for Bluetooth permission the first time the bridge runs. The
 board must be powered and not connected to another BLE client.
