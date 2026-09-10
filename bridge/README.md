@@ -8,6 +8,7 @@ From this directory:
 uv run main.py scan
 uv run main.py inspect
 uv run main.py signal
+uv run main.py watch --seconds 30
 ```
 
 - `scan` discovers the device advertised as `Talisman-V1`.
@@ -15,6 +16,8 @@ uv run main.py signal
   characteristics.
 - `signal` writes the semantic JSON attention command. The firmware maps that
   intent to the current physical expression.
+- `watch` reads the initial state and latest event, then prints live state and
+  semantic-event notifications.
 
 macOS may ask for Bluetooth permission the first time the bridge runs. The
 board must be powered and not connected to another BLE client.
@@ -27,3 +30,5 @@ board must be powered and not connected to another BLE client.
 | Info | `7a110002-6c8d-4f4b-9f3a-45dcd0a6b001` |
 | State | `7a110003-6c8d-4f4b-9f3a-45dcd0a6b001` |
 | Command | `7a110004-6c8d-4f4b-9f3a-45dcd0a6b001` |
+| Events | `7a110005-6c8d-4f4b-9f3a-45dcd0a6b001` |
+| Config | `7a110006-6c8d-4f4b-9f3a-45dcd0a6b001` |

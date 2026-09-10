@@ -49,6 +49,10 @@ constexpr char kStateCharacteristicUuid[] =
     "7a110003-6c8d-4f4b-9f3a-45dcd0a6b001";
 constexpr char kCommandCharacteristicUuid[] =
     "7a110004-6c8d-4f4b-9f3a-45dcd0a6b001";
+constexpr char kEventsCharacteristicUuid[] =
+    "7a110005-6c8d-4f4b-9f3a-45dcd0a6b001";
+constexpr char kConfigCharacteristicUuid[] =
+    "7a110006-6c8d-4f4b-9f3a-45dcd0a6b001";
 constexpr uint16_t kBleJsonMaximumLength = 96;
 constexpr char kAttentionCommand[] =
     "{\"action\":\"signal\",\"pattern\":\"attention\"}";
@@ -157,6 +161,10 @@ BLEService talismanService(kTalismanServiceUuid);
 BLECharacteristic infoCharacteristic(kInfoCharacteristicUuid);
 BLECharacteristic stateCharacteristic(kStateCharacteristicUuid);
 BLECharacteristic commandCharacteristic(kCommandCharacteristicUuid);
+BLECharacteristic eventsCharacteristic(kEventsCharacteristicUuid);
+BLECharacteristic configCharacteristic(kConfigCharacteristicUuid);
+
+const char* semanticEventName(SemanticEventType type);
 
 void printIdentity() {
   Serial.println("[TALISMAN]");
@@ -172,6 +180,48 @@ void updateBleStateValue() {
            "{\"type\":\"state\",\"arousal\":%u,\"familiarity\":%u}",
            behaviourState.arousal, behaviourState.familiarity);
   stateCharacteristic.write(json);
+  if (Bluefruit.connected() && stateCharacteristic.notifyEnabled()) {
+    char notification[20];
+    snprintf(notification, sizeof(notification), "{\"a\":%u,\"f\":%u}",
+             behaviourState.arousal, behaviourState.familiarity);
+    stateCharacteristic.notify(notification);
+  }
+}
+
+const char* compactBleEventName(SemanticEventType type) {
+  switch (type) {
+    case SemanticEventType::MovementStarted:
+      return "MOVE_START";
+    case SemanticEventType::MovementStopped:
+      return "MOVE_STOP";
+    case SemanticEventType::Tap:
+      return "TAP";
+    case SemanticEventType::DoubleTap:
+      return "DOUBLE_TAP";
+    case SemanticEventType::LongTouch:
+      return "LONG_TOUCH";
+  }
+  return "UNKNOWN";
+}
+
+void publishBleEvent(const SemanticEvent& event) {
+  char json[kBleJsonMaximumLength + 1];
+  if (event.durationMs > 0) {
+    snprintf(json, sizeof(json),
+             "{\"type\":\"event\",\"name\":\"%s\",\"duration_ms\":%lu}",
+             semanticEventName(event.type),
+             static_cast<unsigned long>(event.durationMs));
+  } else {
+    snprintf(json, sizeof(json), "{\"type\":\"event\",\"name\":\"%s\"}",
+             semanticEventName(event.type));
+  }
+  eventsCharacteristic.write(json);
+  if (Bluefruit.connected() && eventsCharacteristic.notifyEnabled()) {
+    char notification[20];
+    snprintf(notification, sizeof(notification), "{\"e\":\"%s\"}",
+             compactBleEventName(event.type));
+    eventsCharacteristic.notify(notification);
+  }
 }
 
 void bleConnectCallback(uint16_t connectionHandle) {
@@ -230,7 +280,7 @@ void initialiseBle() {
            kFirmwareVersion, kPersistenceSchemaVersion);
   infoCharacteristic.write(infoJson);
 
-  stateCharacteristic.setProperties(CHR_PROPS_READ);
+  stateCharacteristic.setProperties(CHR_PROPS_READ | CHR_PROPS_NOTIFY);
   stateCharacteristic.setPermission(SECMODE_OPEN, SECMODE_NO_ACCESS);
   stateCharacteristic.setMaxLen(kBleJsonMaximumLength);
   stateCharacteristic.begin();
@@ -241,6 +291,26 @@ void initialiseBle() {
   commandCharacteristic.setMaxLen(kBleJsonMaximumLength);
   commandCharacteristic.setWriteCallback(bleCommandWriteCallback);
   commandCharacteristic.begin();
+
+  eventsCharacteristic.setProperties(CHR_PROPS_READ | CHR_PROPS_NOTIFY);
+  eventsCharacteristic.setPermission(SECMODE_OPEN, SECMODE_NO_ACCESS);
+  eventsCharacteristic.setMaxLen(kBleJsonMaximumLength);
+  eventsCharacteristic.begin();
+  eventsCharacteristic.write("{\"type\":\"event\",\"name\":null}");
+
+  configCharacteristic.setProperties(CHR_PROPS_READ);
+  configCharacteristic.setPermission(SECMODE_OPEN, SECMODE_NO_ACCESS);
+  configCharacteristic.setMaxLen(kBleJsonMaximumLength);
+  configCharacteristic.begin();
+  char configJson[kBleJsonMaximumLength + 1];
+  snprintf(configJson, sizeof(configJson),
+           "{\"type\":\"config\",\"tap_ms\":%lu,\"double_ms\":%lu,"
+           "\"long_ms\":%lu,\"arousal_high\":%u}",
+           static_cast<unsigned long>(kTapMaximumMs),
+           static_cast<unsigned long>(kDoubleTapGapMaximumMs),
+           static_cast<unsigned long>(kLongTouchThresholdMs),
+           kHighArousalThreshold);
+  configCharacteristic.write(configJson);
 
   Bluefruit.Advertising.addFlags(BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE);
   Bluefruit.Advertising.addTxPower();
@@ -623,6 +693,7 @@ void emitSemanticEvent(SemanticEventType type, uint32_t durationMs = 0) {
   }
   Serial.println();
 
+  publishBleEvent(event);
   recordPersistentInteraction(event);
   updateBehaviourForEvent(event);
   expressSemanticEvent(event);

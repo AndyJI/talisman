@@ -1327,6 +1327,18 @@ config
 info
 ```
 
+### Implementation and Results
+
+The custom Talisman service now exposes the complete initial semantic interface. `info` and `config` are readable descriptions; `state` is readable and notifiable; `events` retains the latest full event as a readable value and also notifies observers; and `command` remains a validated write boundary. The added `config` value reports the active tap, double-tap, long-touch, and high-arousal thresholds rather than requiring a host to know firmware constants.
+
+Readable values remain descriptive JSON. During live notification testing, sending the same full JSON through the default BLE notification path exposed the characteristic 20-byte payload boundary and produced fragmented messages on Soma. State and event notifications were therefore given deliberately compact, complete JSON representations such as `{"a":5,"f":36}` and `{"e":"TAP"}`, while reads retain the fuller self-describing forms. This keeps the first protocol reliable without leaking packet reassembly into every consumer; richer payload framing can be versioned later if it becomes necessary.
+
+The Soma-side bridge adds a `watch` command that reads the initial full state and latest event, subscribes to both notification characteristics, parses each notification as JSON, and stops cleanly after a bounded interval. Physical acceptance captured a `TAP` event followed by state notifications showing arousal rising from 0 to 5 and familiarity increasing from 34 to 36, then the expected timed arousal decay. A further tap was also observed without malformed or fragmented notifications.
+
+The existing semantic attention command was sent through the completed interface and produced the intended two quick motor pulses, heard clearly against the breadboard. After the BLE client disconnected, an ordinary touch interaction still produced its normal local vibration. BLE callbacks therefore publish or queue semantic data and intent, while event classification, behavioural-state updates, persistence, and physical expression remain owned by the existing firmware logic.
+
+Experiment 10 meets its acceptance criteria: state is readable and observable, semantic events are observable, a semantic command triggers its expression, and autonomous local behaviour continues independently of the BLE connection.
+
 ### Acceptance Criteria
 
 - state can be read;
