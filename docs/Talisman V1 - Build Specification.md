@@ -1294,6 +1294,16 @@ Experiment 08 therefore meets its persistence boundary: selected behavioural sta
 - read device information;
 - exchange first human-readable JSON.
 
+### Implementation and Results
+
+The XIAO now advertises indefinitely as `Talisman-V1` using the custom service UUID `7a110001-6c8d-4f4b-9f3a-45dcd0a6b001`. Experiment 09 deliberately exposes only three characteristics: readable `info` (`...0002`), readable live `state` (`...0003`), and writable `command` (`...0004`). This is the smallest useful bring-up boundary; the fuller `state`, `events`, `command`, `config`, and `info` semantic interface remains Experiment 10 work.
+
+The readable values use compact JSON. `info` reports firmware and persistence-schema versions, while `state` reports current arousal and familiarity. The initial command vocabulary accepts only `{"action":"signal","pattern":"attention"}`. BLE callbacks validate and queue that intent; the ordinary firmware loop performs the physical expression, keeping radio implementation details out of the haptic execution path.
+
+The standalone Soma-side bridge now provides repeatable `scan`, `inspect`, and `signal` commands using Bleak. Soma discovered `Talisman-V1`, connected twice independently, found the custom service, and read `{"firmware":"0.1.0-dev","schema":1,"type":"info"}` plus live state containing arousal 0 and familiarity 30. A third connection wrote the attention command successfully. Firmware accepted the exact JSON, executed the semantic signal, completed the haptic operation at drive 40, disconnected normally, and continued its heartbeat. A repeated command produced two quick, clearly audible motor pulses against the breadboard; they were too soft to feel reliably by fingertip, which is noted for later expression tuning rather than treated as a BLE failure.
+
+Experiment 09 therefore meets its acceptance criteria without additional soldering: advertising is discoverable from Soma, independent connection cycles succeed, human-readable state and device information can be retrieved, and a semantic JSON command crosses the BLE boundary and produces the intended two-pulse response.
+
 ### Acceptance Criteria
 
 - device is reliably discoverable;

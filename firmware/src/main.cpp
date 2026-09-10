@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <Adafruit_TinyUSB.h>
 #include <Adafruit_LittleFS.h>
+#include <bluefruit.h>
 #include <InternalFileSystem.h>
 #include <LSM6DS3.h>
 #include <Wire.h>
@@ -39,6 +40,18 @@ constexpr uint8_t kPersistentEventCapacity = 8;
 constexpr uint32_t kCheckpointDelayMs = 10000;
 constexpr char kPersistenceSlotA[] = "/state-a.bin";
 constexpr char kPersistenceSlotB[] = "/state-b.bin";
+constexpr char kBleDeviceName[] = "Talisman-V1";
+constexpr char kTalismanServiceUuid[] =
+    "7a110001-6c8d-4f4b-9f3a-45dcd0a6b001";
+constexpr char kInfoCharacteristicUuid[] =
+    "7a110002-6c8d-4f4b-9f3a-45dcd0a6b001";
+constexpr char kStateCharacteristicUuid[] =
+    "7a110003-6c8d-4f4b-9f3a-45dcd0a6b001";
+constexpr char kCommandCharacteristicUuid[] =
+    "7a110004-6c8d-4f4b-9f3a-45dcd0a6b001";
+constexpr uint16_t kBleJsonMaximumLength = 96;
+constexpr char kAttentionCommand[] =
+    "{\"action\":\"signal\",\"pattern\":\"attention\"}";
 
 constexpr uint8_t kImuI2cAddress = 0x6A;
 constexpr uint8_t kHapticI2cAddress = 0x5A;
@@ -74,6 +87,7 @@ uint32_t persistenceDirtyAtMs = 0;
 uint32_t persistenceGeneration = 0;
 uint32_t interactionCount = 0;
 uint32_t nextPersistentEventSequence = 1;
+volatile bool attentionSignalIsPending = false;
 
 LSM6DS3 imu(I2C_MODE, kImuI2cAddress);
 bool imuIsAvailable = false;
@@ -139,12 +153,108 @@ PersistentEventRecord persistentEvents[kPersistentEventCapacity] = {};
 uint8_t persistentEventCount = 0;
 uint8_t nextPersistentEventIndex = 0;
 
+BLEService talismanService(kTalismanServiceUuid);
+BLECharacteristic infoCharacteristic(kInfoCharacteristicUuid);
+BLECharacteristic stateCharacteristic(kStateCharacteristicUuid);
+BLECharacteristic commandCharacteristic(kCommandCharacteristicUuid);
+
 void printIdentity() {
   Serial.println("[TALISMAN]");
   Serial.println("boot: ok");
   Serial.print("firmware: ");
   Serial.println(kFirmwareVersion);
   Serial.println("state: awake");
+}
+
+void updateBleStateValue() {
+  char json[kBleJsonMaximumLength + 1];
+  snprintf(json, sizeof(json),
+           "{\"type\":\"state\",\"arousal\":%u,\"familiarity\":%u}",
+           behaviourState.arousal, behaviourState.familiarity);
+  stateCharacteristic.write(json);
+}
+
+void bleConnectCallback(uint16_t connectionHandle) {
+  char peerName[32] = {};
+  BLEConnection* connection = Bluefruit.Connection(connectionHandle);
+  if (connection != nullptr) {
+    connection->getPeerName(peerName, sizeof(peerName));
+  }
+  updateBleStateValue();
+  Serial.print("ble: connected peer=");
+  Serial.println(peerName[0] == '\0' ? "unknown" : peerName);
+}
+
+void bleDisconnectCallback(uint16_t connectionHandle, uint8_t reason) {
+  (void)connectionHandle;
+  Serial.print("ble: disconnected reason=0x");
+  Serial.println(reason, HEX);
+}
+
+void bleCommandWriteCallback(uint16_t connectionHandle,
+                             BLECharacteristic* characteristic, uint8_t* data,
+                             uint16_t length) {
+  (void)connectionHandle;
+  (void)characteristic;
+
+  char command[kBleJsonMaximumLength + 1] = {};
+  const uint16_t copiedLength = min(length, kBleJsonMaximumLength);
+  memcpy(command, data, copiedLength);
+  const bool accepted = length <= kBleJsonMaximumLength &&
+                        strcmp(command, kAttentionCommand) == 0;
+  if (accepted) {
+    attentionSignalIsPending = true;
+  }
+
+  Serial.print("ble: command status=");
+  Serial.print(accepted ? "accepted payload=" : "rejected payload=");
+  Serial.println(command);
+}
+
+void initialiseBle() {
+  Bluefruit.begin(1, 0);
+  Bluefruit.setTxPower(4);
+  Bluefruit.setName(kBleDeviceName);
+  Bluefruit.Periph.setConnectCallback(bleConnectCallback);
+  Bluefruit.Periph.setDisconnectCallback(bleDisconnectCallback);
+
+  talismanService.begin();
+
+  infoCharacteristic.setProperties(CHR_PROPS_READ);
+  infoCharacteristic.setPermission(SECMODE_OPEN, SECMODE_NO_ACCESS);
+  infoCharacteristic.setMaxLen(kBleJsonMaximumLength);
+  infoCharacteristic.begin();
+  char infoJson[kBleJsonMaximumLength + 1];
+  snprintf(infoJson, sizeof(infoJson),
+           "{\"type\":\"info\",\"firmware\":\"%s\",\"schema\":%u}",
+           kFirmwareVersion, kPersistenceSchemaVersion);
+  infoCharacteristic.write(infoJson);
+
+  stateCharacteristic.setProperties(CHR_PROPS_READ);
+  stateCharacteristic.setPermission(SECMODE_OPEN, SECMODE_NO_ACCESS);
+  stateCharacteristic.setMaxLen(kBleJsonMaximumLength);
+  stateCharacteristic.begin();
+  updateBleStateValue();
+
+  commandCharacteristic.setProperties(CHR_PROPS_WRITE);
+  commandCharacteristic.setPermission(SECMODE_NO_ACCESS, SECMODE_OPEN);
+  commandCharacteristic.setMaxLen(kBleJsonMaximumLength);
+  commandCharacteristic.setWriteCallback(bleCommandWriteCallback);
+  commandCharacteristic.begin();
+
+  Bluefruit.Advertising.addFlags(BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE);
+  Bluefruit.Advertising.addTxPower();
+  Bluefruit.Advertising.addService(talismanService);
+  Bluefruit.ScanResponse.addName();
+  Bluefruit.Advertising.restartOnDisconnect(true);
+  Bluefruit.Advertising.setInterval(32, 244);
+  Bluefruit.Advertising.setFastTimeout(30);
+  Bluefruit.Advertising.start(0);
+
+  Serial.print("ble: advertising name=");
+  Serial.print(kBleDeviceName);
+  Serial.print(" service=");
+  Serial.println(kTalismanServiceUuid);
 }
 
 void startHeartbeat(uint32_t nowMs) {
@@ -470,6 +580,7 @@ void updateBehaviourForEvent(const SemanticEvent& event) {
   behaviourState.familiarity =
       boundedAdd(behaviourState.familiarity, familiarityChange);
   printBehaviourState(semanticEventName(event.type));
+  updateBleStateValue();
 }
 
 uint8_t currentHapticDriveStrength() {
@@ -530,6 +641,18 @@ void updateBehaviourDecay(uint32_t nowMs) {
   behaviourState.arousal =
       boundedAdd(behaviourState.arousal, -kArousalDecayAmount);
   printBehaviourState("TIME_DECAY");
+  updateBleStateValue();
+}
+
+void processPendingBleCommand() {
+  if (!attentionSignalIsPending) {
+    return;
+  }
+
+  attentionSignalIsPending = false;
+  Serial.println("ble: action=signal pattern=attention status=executing");
+  playHapticPattern("ble_attention", 2, kDoubleTapHapticPulseMs,
+                    kDoubleTapHapticGapMs, currentHapticDriveStrength());
 }
 
 ImuSample readImuSample() {
@@ -731,6 +854,7 @@ void setup() {
   initialiseImu();
   probeHapticController();
   initialiseTouchInput();
+  initialiseBle();
   const uint32_t nowMs = millis();
   awakeStartedAtMs = nowMs;
   lastImuSampleAtMs = nowMs;
@@ -746,6 +870,7 @@ void loop() {
   updatePendingTap(nowMs);
   updateBehaviourDecay(nowMs);
   checkpointPersistence(nowMs);
+  processPendingBleCommand();
   const uint32_t heartbeatElapsedMs = nowMs - heartbeatStartedAtMs;
 
   if (heartbeatLedIsOn && heartbeatElapsedMs >= kHeartbeatPulseMs) {
