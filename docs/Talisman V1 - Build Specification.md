@@ -1404,6 +1404,16 @@ Protected LiPo.
 - transition between USB and battery operation;
 - begin untethered testing.
 
+### Implementation and Results
+
+One 3.7 V, 150 mAh LiPo was integrated through a verified mating two-wire pigtail soldered to the XIAO's underside battery pads. Before connection, the battery measured 3.952 V through the pigtail with red positive and black negative. The black lead was soldered to the XIAO battery `-` pad and the red lead to `+`. Unpowered checks confirmed continuity through each corresponding lead, no continuity between the battery pads, and mechanically secure joints. A subsequent USB-only run retained the alternating red/blue heartbeat, touch classification, and all three established haptic patterns, with no heat, smell, smoke, or other abnormal behaviour.
+
+On battery power alone, the XIAO started autonomously after approximately three seconds. The heartbeat, touch sensor, and all three touch-dependent haptic patterns then behaved normally. Connecting USB while the battery remained attached produced a green XIAO indicator and did not interrupt the heartbeat, touch processing, or haptics. Removing USB again caused no visible restart or behavioural interruption, demonstrating clean transitions in both directions.
+
+After 30 minutes connected to USB, the rested battery voltage had risen from 3.952 V to 4.1 V. This measured increase confirms charge transfer through the XIAO's onboard charging path; the green indicator remained illuminated at the end of the bounded observation, so charge completion was not inferred. Throughout charging and transition testing there was no detected warmth, swelling, smell, smoke, or unexpected reset.
+
+The final untethered acceptance run exercised several physical touch patterns and the standalone bridge command `uv run main.py demo --seconds 15`. BLE discovery, connection, semantic command handling, touch input, haptics, and the heartbeat all remained stable on battery power. Experiment 12 therefore meets its acceptance criteria: the device operates reliably from the integrated battery, onboard charging transfers energy into the cell, USB/battery transitions are uninterrupted, and no unexpected resets were observed.
+
 ### Acceptance Criteria
 
 - device operates reliably from battery;
@@ -1530,7 +1540,7 @@ BUILD STATE
 Hardware available:
 - 1 Seeed Studio XIAO nRF52840 Sense
 - YOJOCK USB digital power tester with USB and USB-C inputs and outputs
-- 2 LiPo batteries labelled 3.7 V, 150 mAh, with PH1.25 plugs, plus a matching USB charging lead; connector polarity, protection circuitry, and charging behaviour remain to be verified before later integration
+- 2 LiPo batteries labelled 3.7 V, 150 mAh, with 2-pin 1.25 mm plugs, plus a matching USB charging lead and mating pigtail; one battery's polarity, physical mating, onboard charging path, and battery-powered operation have been verified, while protection circuitry has not been independently characterised
 - HEEPD haptic motor controller using a DRV2605L haptic driver (marked Vin/Logic 2-5V, GC-2, 94V-0; verified on the external I2C bus at address `0x5A`)
 - WS2812B-8 LED modules
 - 5 flat coin vibration motors (10 x 2.7 mm, DC 3-5V, specified 63 mA, described by supplier as micro brushless)
@@ -1541,27 +1551,34 @@ Hardware available:
 - 2 labelled USB-A screw-terminal adaptors and 1 USB-A-female-to-USB-C cable; an attempted measurement bridge was abandoned after unstable readings and must not be treated as validated test equipment
 
 Hardware currently connected:
-- XIAO by USB, with one TTP223 powered from 3.3 V and connected to `D1`
+- XIAO with one TTP223 powered from 3.3 V and connected to `D1`
+- DRV2605L on the external I2C bus with one coin vibration motor attached through its screw terminal
+- verified battery pigtail soldered black-to-`-` and red-to-`+` on the XIAO battery pads; battery remains removable at its connector
 
 Firmware version: 0.1.0-dev
 Firmware status:
-- Experiments 01, 02, 03 and 04 complete
+- Experiments 01 through 12 complete
 - PlatformIO build succeeds from a clean build directory
 - repeated clean builds produce identical `.hex` and `.elf` artefacts; the generated `.zip` hash changes with archive metadata
 - Soma detects the board as Seeed XIAO nRF52840 Sense at USB VID:PID 2886:8045
 - two consecutive nrfutil DFU uploads completed successfully through /dev/cu.usbmodem21101
 - USB serial output confirmed at 115200 baud, including the complete boot identity and consecutive heartbeat counters
-- onboard red LED heartbeat physically confirmed as a brief pulse approximately once per second
+- onboard heartbeat now alternates red and blue while preserving its approximately one-second cadence
 - onboard LSM6DS3 initialises over internal I2C at address 0x6A
 - accelerometer and gyroscope samples are emitted every 250 ms over USB serial
 - provisional hysteretic movement detection emits MOVEMENT_STARTED and MOVEMENT_STOPPED
 - initial timed CPU sleep test cycles between 10 seconds awake and 5 seconds asleep while retaining USB observability
 - three consecutive timed sleep/wake cycles completed without reset, serial disconnection, or failure to resume IMU sampling
+- blocking scheduled sleep is disabled in the integrated firmware because it prevents touch sampling and haptic response; wake-capable low-power behaviour remains future work
+- TTP223 input classifies `TAP`, `DOUBLE_TAP`, and `LONG_TOUCH`, with distinct DRV2605L haptic responses
+- movement and touch feed a shared semantic event layer and bounded behaviour state; selected state and touch history persist through restart using a versioned, checksummed LittleFS snapshot
+- the custom `Talisman-V1` BLE service exposes readable device information and configuration, readable/notifiable state and events, and a validated semantic command boundary
+- battery-only operation preserves heartbeat, touch, haptics, persistence, BLE discovery, bridge communication, and semantic command handling
 
-Bridge status: Initial uv scaffold only; intentionally untouched through Experiment 03
+Bridge status: Standalone BLE bridge complete through Experiment 11, with repeatable `scan`, `inspect`, `watch`, `signal`, and bounded `demo` commands
 
-Last completed experiment: Experiment 04 - Touch
-Current experiment: None; Experiment 04 complete and Experiment 05 not started
+Last completed experiment: Experiment 12 - Battery Operation
+Current experiment: None; Experiment 12 complete and Experiment 13 not started
 
 Known issues:
 - The pinned Seeed platform requires an explicit Adafruit_TinyUSB include for USB CDC symbols to link
@@ -1575,6 +1592,8 @@ Power measurements:
 - tester settings expose no adjustable low-current or load-start threshold, so a different measurement method is required for active and sleep current
 - the available Crenova MS8233D's fused 60 mA DC range covers the observed 20-24 mA peaks with 0.01 mA display resolution; a safe series-power connection is still required
 - an improvised screw-terminal USB measurement bridge produced unstable readings up to approximately 87 V; it was disconnected before the XIAO was attached and yielded no valid power data
+- integrated battery measured 3.952 V before charging and 4.1 V after 30 minutes on the XIAO's USB-powered charging path, confirming charge transfer
+- battery-only startup, USB-to-battery transition, battery-to-USB transition, touch, haptics, BLE, and a bounded bridge demo completed without an observed reset or thermal warning sign
 
 Confirmed decisions:
 - PlatformIO Core 6.1.19
@@ -1589,18 +1608,20 @@ Confirmed decisions:
 - the pinned core's FreeRTOS tickless idle supports repeatable timed CPU sleep and scheduled wake while USB remains connected
 - XIAO `D1` (`P0.03`) is allocated provisionally to the TTP223 digital output; `D4`/`D5` remain available for I2C
 - the tested TTP223 with configuration pads `A` and `B` open produces momentary active-high output: approximately 0 V released and 2.6 V touched from a 3.3 V supply
+- the tested battery and mating pigtail use red as positive and black as negative; this polarity was verified electrically before connection
+- the XIAO battery pads are wired black-to-`-` and red-to-`+`, with continuity on each intended path and no measured short between the pads
+- the XIAO's onboard charging path transfers energy into the 150 mAh cell while preserving normal device behaviour
 
 Open decisions:
-- establish a sufficiently sensitive and safe current-profiling method before Experiment 11 quantifies active and sleep consumption
+- establish a sufficiently sensitive and safe current-profiling method for Experiment 13
 - determine the next practical sleep depth and wake source during later power-focused work
 - tune or replace the provisional 12 dps start and 4 dps stop movement thresholds using evidence from later physical use
 - determine whether handling-related USB interruptions come from cable or connector movement, host behaviour, or firmware
-- confirm the DRV2605L controller pinout and connection details from the physical board before Experiment 05 wiring
-- confirm the coin motors' actual drive technology and compatibility with the DRV2605L before Experiment 05 wiring
 - measure TTP223 false-trigger characteristics over longer observation and varied handling
 - confirm the WS2812B-8 module pinout and electrical details before any future external-light experiment
+- independently characterise the battery protection circuitry before relying on it as a final product safety control
 
-Next experiment: Experiment 05 - Haptics; verify the controller and motor electrical details before wiring
+Next experiment: Experiment 13 - Power Characterisation; select a safe measurement method and measure representative operating modes
 ```
 
 This section should provide a rapid re-entry point for future Codex sessions.
